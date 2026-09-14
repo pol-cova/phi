@@ -1,0 +1,22 @@
+{
+  "name": "phi-practice",
+  "version": "0.1.0",
+  "description": "Fetch, test, and submit coding problems from your terminal",
+  "license": "MIT",
+  "author": "Paul Contreras",
+  "repository": { "type": "git", "url": "https://github.com/pol-cova/phi.git" },
+  "homepage": "https://github.com/pol-cova/phi#readme",
+  "bugs": "https://github.com/pol-cova/phi/issues",
+  "keywords": ["cli", "competitive-programming", "leetcode", "neetcode", "codeforces", "typescript", "python", "cpp"],
+  "files": ["bin/", "src/", "templates/", "docs/", "contributing.md", "LICENSE"],
+  "type": "module",
+  "bin": { "phi": "bin/phi.js" },
+  "scripts": {
+    "start": "node bin/phi.js",
+    "test": "node --test",
+    "check": "node --check bin/phi.js && node --test",
+    "setup": "node bin/phi.js setup"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": { "cheerio": "1.2.0", "playwright": "1.63.0", "typescript": "5.9.3" }
+}
