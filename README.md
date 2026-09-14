@@ -26,6 +26,12 @@ Then install the browser once:
 phi setup
 ```
 
+Already have Chrome, Edge, or Chromium? Skip the ~200 MB download and reuse it:
+
+```sh
+PHI_BROWSER_CHANNEL=chrome phi doctor
+```
+
 Bun handles installation; Node runs the CLI. Homebrew installs Node for you.
 
 ## Solve something

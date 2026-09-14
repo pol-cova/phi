@@ -12,6 +12,7 @@ import { chooseCompiler, findSubmission } from '../src/platforms/codeforces.js';
 import { leetcodeResult, executeLeetcode, executeNeetcode } from '../src/platforms/interview.js';
 import { EventEmitter } from 'node:events';
 import { submissionSource } from '../src/typescript.js';
+import { browserLaunchOptions, describeBrowser, browserEnvFor, discoverSystemBrowsers, detectSystemBrowser } from '../src/browser.js';
 
 async function temporary(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'phi-unit-'));
@@ -222,4 +223,33 @@ test('the Codeforces C++ template has fast I/O and compiles locally', async t =>
   assert.match(code, /#include <bits\/stdc\+\+\.h>/);
   assert.match(code, /ios::sync_with_stdio\(false\)/);
   assert.match(code, /cin\.tie\(nullptr\)/);
+});
+
+test('system browser discovery lists every installed browser with its env usage', async () => {
+  const found = await discoverSystemBrowsers();
+  assert.ok(Array.isArray(found));
+  for (const browser of found) {
+    assert.equal(typeof browser.name, 'string');
+    assert.equal(typeof browser.path, 'string');
+    assert.ok(browser.channel ?? browser.executablePath, browser.name);
+    assert.match(browserEnvFor(browser), /^PHI_BROWSER_(CHANNEL|EXECUTABLE)=/);
+  }
+  assert.equal(await detectSystemBrowser(), found[0]?.path ?? null);
+});
+
+test('browser env selection is explicit and described', () => {
+  const channel = process.env.PHI_BROWSER_CHANNEL;
+  const executable = process.env.PHI_BROWSER_EXECUTABLE;
+  try {
+    process.env.PHI_BROWSER_CHANNEL = 'chrome';
+    delete process.env.PHI_BROWSER_EXECUTABLE;
+    assert.deepEqual(browserLaunchOptions(), { channel: 'chrome' });
+    assert.match(describeBrowser(), /chrome/);
+    assert.equal(browserEnvFor({ name: 'Google Chrome', channel: 'chrome', path: '/x' }), 'PHI_BROWSER_CHANNEL=chrome');
+    process.env.PHI_BROWSER_EXECUTABLE = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+    assert.throws(() => browserLaunchOptions(), /only one/);
+  } finally {
+    if (channel === undefined) delete process.env.PHI_BROWSER_CHANNEL; else process.env.PHI_BROWSER_CHANNEL = channel;
+    if (executable === undefined) delete process.env.PHI_BROWSER_EXECUTABLE; else process.env.PHI_BROWSER_EXECUTABLE = executable;
+  }
 });
