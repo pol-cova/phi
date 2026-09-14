@@ -1,14 +1,40 @@
 import { mkdir, writeFile, readFile, rm, chmod, access } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 export const dataHome = () => path.resolve(process.env.PHI_HOME ?? path.join(os.homedir(), '.local', 'share', 'phi'));
 
+export const configPath = () => path.join(dataHome(), 'config.json');
+
+// Persisted `phi setup --use` choice. Environment variables always win.
+function savedBrowserOptions() {
+  try {
+    const config = JSON.parse(readFileSync(configPath(), 'utf8'));
+    if (typeof config.browserChannel === 'string' && config.browserChannel.trim()) return { channel: config.browserChannel.trim() };
+    if (typeof config.browserExecutable === 'string' && config.browserExecutable.trim()) return { executablePath: config.browserExecutable.trim() };
+  } catch { /* missing or invalid config: fall through to bundled Chromium */ }
+  return {};
+}
+
 export function browserLaunchOptions() {
   const channel = process.env.PHI_BROWSER_CHANNEL?.trim() || undefined;
   const executablePath = process.env.PHI_BROWSER_EXECUTABLE?.trim() || undefined;
   if (channel && executablePath) throw new Error('Set only one of PHI_BROWSER_CHANNEL or PHI_BROWSER_EXECUTABLE.');
-  return { ...(channel ? { channel } : {}), ...(executablePath ? { executablePath } : {}) };
+  if (channel || executablePath) return { ...(channel ? { channel } : {}), ...(executablePath ? { executablePath } : {}) };
+  return savedBrowserOptions();
+}
+
+export async function saveBrowserChoice(choice) {
+  const file = configPath();
+  await mkdir(path.dirname(file), { recursive: true });
+  let config = {};
+  try { config = JSON.parse(await readFile(file, 'utf8')); } catch { /* start fresh */ }
+  delete config.browserChannel;
+  delete config.browserExecutable;
+  if (choice.channel) config.browserChannel = choice.channel;
+  if (choice.executablePath) config.browserExecutable = choice.executablePath;
+  await writeFile(file, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
 }
 
 export function describeBrowser() {

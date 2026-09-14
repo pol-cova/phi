@@ -253,3 +253,45 @@ test('browser env selection is explicit and described', () => {
     if (executable === undefined) delete process.env.PHI_BROWSER_EXECUTABLE; else process.env.PHI_BROWSER_EXECUTABLE = executable;
   }
 });
+
+test('browser choice persists to config and env still wins', async t => {
+  const { saveBrowserChoice } = await import('../src/browser.js');
+  const home = process.env.PHI_HOME;
+  const channel = process.env.PHI_BROWSER_CHANNEL;
+  const executable = process.env.PHI_BROWSER_EXECUTABLE;
+  const root = await temporary(t);
+  try {
+    process.env.PHI_HOME = root;
+    delete process.env.PHI_BROWSER_CHANNEL;
+    delete process.env.PHI_BROWSER_EXECUTABLE;
+    assert.deepEqual(browserLaunchOptions(), {});
+    await saveBrowserChoice({ channel: 'msedge' });
+    assert.deepEqual(browserLaunchOptions(), { channel: 'msedge' });
+    assert.match(describeBrowser(), /msedge/);
+    await saveBrowserChoice({ executablePath: '/tmp/fake-browser' });
+    assert.deepEqual(browserLaunchOptions(), { executablePath: '/tmp/fake-browser' });
+    process.env.PHI_BROWSER_CHANNEL = 'chrome';
+    assert.deepEqual(browserLaunchOptions(), { channel: 'chrome' });
+    await writeFile(path.join(root, 'config.json'), 'not json');
+    delete process.env.PHI_BROWSER_CHANNEL;
+    assert.deepEqual(browserLaunchOptions(), {});
+  } finally {
+    if (home === undefined) delete process.env.PHI_HOME; else process.env.PHI_HOME = home;
+    if (channel === undefined) delete process.env.PHI_BROWSER_CHANNEL; else process.env.PHI_BROWSER_CHANNEL = channel;
+    if (executable === undefined) delete process.env.PHI_BROWSER_EXECUTABLE; else process.env.PHI_BROWSER_EXECUTABLE = executable;
+  }
+});
+
+test('upgrade reinstalls through the manager that installed phi', async () => {
+  const { detectInstaller, upgradeCommand, latestVersion } = await import('../src/upgrade.js');
+  assert.equal(detectInstaller('/opt/homebrew/Cellar/phi/HEAD-abc/libexec/bin/phi.js'), 'brew');
+  assert.equal(detectInstaller('C:\\Program Files\\phi\\bin\\phi.js'.replaceAll('\\', '/')), 'npm');
+  assert.equal(detectInstaller('/Users/a/.bun/install/global/node_modules/phi-practice/bin/phi.js'), 'bun');
+  assert.equal(detectInstaller('/Users/a/.npm-global/lib/node_modules/phi-practice/bin/phi.js'), 'npm');
+  assert.deepEqual(upgradeCommand('brew'), { command: 'brew', args: ['reinstall', '--HEAD', 'pol-cova/phi/phi'] });
+  assert.deepEqual(upgradeCommand('bun'), { command: 'bun', args: ['add', '-g', 'github:pol-cova/phi'] });
+  assert.deepEqual(upgradeCommand('npm'), { command: 'npm', args: ['install', '-g', 'github:pol-cova/phi'] });
+  assert.equal(await latestVersion(async () => ({ ok: true, json: async () => ({ version: '0.2.0' }) })), '0.2.0');
+  assert.equal(await latestVersion(async () => ({ ok: false })), null);
+  assert.equal(await latestVersion(async () => { throw new Error('offline'); }), null);
+});
