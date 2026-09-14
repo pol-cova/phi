@@ -9,13 +9,13 @@ import { chromium } from 'playwright';
 import { fetchProblem, runProblem, openProblem } from '../src/app.js';
 import { platformName, parseProblem } from '../src/problem.js';
 import { loadProblem, history } from '../src/storage.js';
-import { withBrowser, forgetSession, navigate, dataHome } from '../src/browser.js';
+import { withBrowser, forgetSession, navigate, dataHome, browserLaunchOptions, describeBrowser, verifyBrowserLaunch, discoverSystemBrowsers, browserEnvFor } from '../src/browser.js';
 import { compilerOptions } from '../src/platforms/codeforces.js';
 import { isInterviewLoggedIn } from '../src/platforms/interview.js';
 
 const help = `phi · coding practice in your terminal
 
-  phi setup                        Install the browser (once)
+  phi setup [--bundled]              Detect system browsers or install Chromium (once)
   phi login <lc|nc|cf>              Sign in using a dedicated browser session
   phi fetch <ID|URL> [--lang NAME]  Save a statement, samples, and solution file
   phi show [DIR]                    Read the downloaded statement
@@ -38,6 +38,7 @@ const help = `phi · coding practice in your terminal
   --compiler ID    Select a Codeforces compiler from phi languages
   --retry          Explicitly allow submission after an uncertain earlier attempt
   --json           Print structured results
+  --bundled        With phi setup: force the bundled Chromium download
 
   Inside a downloaded problem folder, DIR defaults to the current directory.
   Tests never submit. Use phi submit when you are ready.
@@ -67,7 +68,7 @@ async function main() {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, lang: { type: 'string', short: 'l' }, out: { type: 'string' },
     show: { type: 'boolean' }, timeout: { type: 'string' }, exact: { type: 'boolean' }, local: { type: 'boolean' },
-    compiler: { type: 'string' }, retry: { type: 'boolean' }, json: { type: 'boolean' },
+    compiler: { type: 'string' }, retry: { type: 'boolean' }, json: { type: 'boolean' }, bundled: { type: 'boolean' },
   } });
   const [command, argument, extra] = positionals;
   if (values.version) return print(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version);
@@ -77,6 +78,18 @@ async function main() {
   if (values.timeout && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error('--timeout must be a positive integer in milliseconds.');
   const directory = argument ?? '.';
   if (command === 'setup') {
+    const launch = browserLaunchOptions();
+    if (launch.channel || launch.executablePath) {
+      await verifyBrowserLaunch();
+      return print(`Using ${describeBrowser()}. No download needed.`);
+    }
+    const found = await discoverSystemBrowsers();
+    if (values.json) return print(JSON.stringify({ browsers: found, bundled: false }));
+    if (found.length > 0 && !values.bundled) {
+      const width = Math.max(...found.map(browser => browser.name.length));
+      const lines = found.map(browser => `  ${browser.name.padEnd(width)}  ${browserEnvFor(browser)}  (${browser.path})`);
+      return print(`Found ${found.length} system browser${found.length === 1 ? '' : 's'} \u2014 no download needed:\n${lines.join('\n')}\n\nTo use one, set it for your shell, then verify:\n  export ${browserEnvFor(found[0])}\n  phi setup\n\nOr download the bundled Chromium anyway:\n  phi setup --bundled`);
+    }
     const require = createRequire(import.meta.url);
     const cli = path.join(path.dirname(require.resolve('playwright/package.json')), 'cli.js');
     const child = spawn(process.execPath, [cli, 'install', 'chromium'], { stdio: 'inherit' });
@@ -141,9 +154,20 @@ async function main() {
     return;
   }
   if (command === 'doctor') {
-    print(`Node ${process.version}\nProfiles: ${dataHome()}`);
+    print(`Node ${process.version}\nProfiles: ${dataHome()}\nBrowser: ${describeBrowser()}`);
+    const launch = browserLaunchOptions();
+    if (launch.channel || launch.executablePath) {
+      try { await verifyBrowserLaunch(); print('Chromium: system browser launch OK'); }
+      catch (error) { print(`Chromium: cannot launch ${describeBrowser()}. ${error.message}`); process.exitCode = 1; }
+      return;
+    }
     try { await access(chromium.executablePath()); print('Chromium: installed'); }
-    catch { print('Chromium: missing. Run phi setup.'); process.exitCode = 1; }
+    catch {
+      const found = await discoverSystemBrowsers();
+      if (found.length) print(`Chromium: missing. Found system browser(s): ${found.map(browser => `${browser.name} (${browserEnvFor(browser)})`).join(', ')}. Run phi setup to use one, or phi setup --bundled to download Chromium.`);
+      else print('Chromium: missing. Run phi setup.');
+      process.exitCode = 1;
+    }
     return;
   }
   throw new Error(`Unknown command: ${command}. See phi --help.`);

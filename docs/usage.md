@@ -39,3 +39,28 @@ If a submission times out, check `phi history` and the site before trying again.
 | `PHI_HOME` | Session storage directory |
 | `PHI_PYTHON` | Python executable, default `python3` |
 | `CXX` | C++ compiler executable, default `c++` |
+| `PHI_BROWSER_CHANNEL` | Reuse a system browser instead of the ~200 MB download, e.g. `chrome`, `chrome-beta`, `msedge` (`phi setup` lists what it finds) |
+| `PHI_BROWSER_EXECUTABLE` | Full path to a browser binary (takes precedence over the channel; set only one of the two) |
+
+## Browser setup without the download
+
+`phi setup` first looks for browsers you already have (Chrome, Edge, Chromium, Brave, Arc, Vivaldi, Opera) and lists them with the exact variable to reuse one. No guessing:
+
+```sh
+phi setup
+# Found 2 system browsers — no download needed:
+#   Google Chrome  PHI_BROWSER_CHANNEL=chrome  (/Applications/Google Chrome.app/...)
+#   Brave          PHI_BROWSER_EXECUTABLE="/Applications/Brave Browser.app/..."
+```
+
+Then set it so it sticks and verify:
+
+```sh
+export PHI_BROWSER_CHANNEL=chrome
+phi setup  # verifies the system browser instead of downloading
+phi doctor   # checks the system launch
+```
+
+With the variable set, fetch/test/submit all use your system browser in phi's isolated profile. Unset the variable to go back to the bundled Chromium. If both variables are set, phi errors out so the choice stays explicit. `phi setup --bundled` forces the ~200 MB bundled Chromium download even when a system browser exists, and `phi setup --json` prints the discovered list for scripts.
+
+Why a real browser at all? The sites sit behind bot protection (Codeforces returns a Cloudflare challenge to plain `curl`), and login plus the LeetCode/NeetCode editors need JavaScript. Reusing your installed browser keeps that compatibility without the extra download.

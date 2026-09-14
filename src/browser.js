@@ -1,8 +1,113 @@
-import { mkdir, writeFile, readFile, rm, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, chmod, access } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 export const dataHome = () => path.resolve(process.env.PHI_HOME ?? path.join(os.homedir(), '.local', 'share', 'phi'));
+
+export function browserLaunchOptions() {
+  const channel = process.env.PHI_BROWSER_CHANNEL?.trim() || undefined;
+  const executablePath = process.env.PHI_BROWSER_EXECUTABLE?.trim() || undefined;
+  if (channel && executablePath) throw new Error('Set only one of PHI_BROWSER_CHANNEL or PHI_BROWSER_EXECUTABLE.');
+  return { ...(channel ? { channel } : {}), ...(executablePath ? { executablePath } : {}) };
+}
+
+export function describeBrowser() {
+  const { channel, executablePath } = browserLaunchOptions();
+  if (executablePath) return `system browser at ${executablePath}`;
+  if (channel) return `system browser via channel "${channel}"`;
+  return 'bundled Chromium';
+}
+
+export async function verifyBrowserLaunch() {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ ...browserLaunchOptions(), headless: true });
+  await browser.close();
+}
+
+function systemBrowserTable() {
+  const home = os.homedir();
+  const programFiles = process.env.PROGRAMFILES ?? 'C:\\Program Files';
+  const localAppData = process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
+  const macApp = name => [`/Applications/${name}`, `${home}/Applications/${name}`];
+  return [
+    { name: 'Google Chrome', channel: 'chrome', paths: [
+      ...macApp('Google Chrome.app/Contents/MacOS/Google Chrome'),
+      path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable',
+    ] },
+    { name: 'Google Chrome Beta', channel: 'chrome-beta', paths: [
+      ...macApp('Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta'),
+      path.join(programFiles, 'Google', 'Chrome Beta', 'Application', 'chrome.exe'),
+      '/usr/bin/google-chrome-beta',
+    ] },
+    { name: 'Google Chrome Dev', channel: 'chrome-dev', paths: [
+      ...macApp('Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'),
+      path.join(programFiles, 'Google', 'Chrome Dev', 'Application', 'chrome.exe'),
+      '/usr/bin/google-chrome-unstable',
+    ] },
+    { name: 'Google Chrome Canary', channel: 'chrome-canary', paths: [
+      ...macApp('Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary'),
+      path.join(localAppData, 'Google', 'Chrome SxS', 'Application', 'chrome.exe'),
+    ] },
+    { name: 'Microsoft Edge', channel: 'msedge', paths: [
+      ...macApp('Microsoft Edge.app/Contents/MacOS/Microsoft Edge'),
+      path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      '/usr/bin/microsoft-edge', '/usr/bin/microsoft-edge-stable',
+    ] },
+    { name: 'Microsoft Edge Beta', channel: 'msedge-beta', paths: [
+      ...macApp('Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta'),
+      '/usr/bin/microsoft-edge-beta',
+    ] },
+    { name: 'Microsoft Edge Dev', channel: 'msedge-dev', paths: [
+      ...macApp('Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev'),
+      '/usr/bin/microsoft-edge-dev',
+    ] },
+    { name: 'Chromium', paths: [
+      ...macApp('Chromium.app/Contents/MacOS/Chromium'),
+      '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium',
+    ] },
+    { name: 'Brave', paths: [
+      ...macApp('Brave Browser.app/Contents/MacOS/Brave Browser'),
+      path.join(programFiles, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+      '/usr/bin/brave-browser', '/usr/bin/brave', '/snap/bin/brave',
+    ] },
+    { name: 'Arc', paths: [...macApp('Arc.app/Contents/MacOS/Arc')] },
+    { name: 'Vivaldi', paths: [
+      ...macApp('Vivaldi.app/Contents/MacOS/Vivaldi'),
+      '/usr/bin/vivaldi', '/usr/bin/vivaldi-stable',
+    ] },
+    { name: 'Opera', paths: [
+      ...macApp('Opera.app/Contents/MacOS/Opera'),
+      '/usr/bin/opera', '/snap/bin/opera',
+    ] },
+  ];
+}
+
+export function browserEnvFor(discovered) {
+  return discovered.channel ? `PHI_BROWSER_CHANNEL=${discovered.channel}` : `PHI_BROWSER_EXECUTABLE=${JSON.stringify(discovered.executablePath)}`;
+}
+
+export async function discoverSystemBrowsers() {
+  const found = [];
+  for (const entry of systemBrowserTable()) {
+    for (const candidate of entry.paths) {
+      try {
+        await access(candidate);
+        found.push(entry.channel
+          ? { name: entry.name, channel: entry.channel, path: candidate }
+          : { name: entry.name, executablePath: candidate, path: candidate });
+        break;
+      } catch { /* try next path for this browser */ }
+    }
+  }
+  return found;
+}
+
+export async function detectSystemBrowser() {
+  const found = await discoverSystemBrowsers();
+  return found[0]?.path ?? null;
+}
 
 export async function withBrowser(platform, options, action) {
   const { chromium } = await import('playwright');
@@ -22,14 +127,14 @@ export async function withBrowser(platform, options, action) {
       headless: !options.show,
       viewport: { width: 1440, height: 1000 },
       locale: 'en-US',
-      ...(process.env.PHI_BROWSER_CHANNEL ? { channel: process.env.PHI_BROWSER_CHANNEL } : {}),
+      ...browserLaunchOptions(),
     });
     context.setDefaultTimeout(20000);
     context.setDefaultNavigationTimeout(45000);
     const page = context.pages()[0] ?? await context.newPage();
     return await action(page, context);
   } catch (error) {
-    if (/Executable doesn't exist/.test(error.message)) throw new Error('Browser is not installed. Run phi setup first.');
+    if (/Executable doesn't exist/.test(error.message)) throw new Error('Browser is not installed. Run phi setup first, or reuse your system browser with PHI_BROWSER_CHANNEL=chrome (see docs/usage.md).');
     throw error;
   } finally {
     try { await context?.close(); } finally { await rm(lock, { recursive: true, force: true }); }
