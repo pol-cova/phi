@@ -29,8 +29,10 @@ phi setup
 Already have Chrome, Edge, or Chromium? Skip the ~200 MB download and reuse it:
 
 ```sh
-PHI_BROWSER_CHANNEL=chrome phi doctor
+phi setup          # lists what it finds; remembers your pick with --use
 ```
+
+Keep phi itself fresh with `phi upgrade`.
 
 Bun handles installation; Node runs the CLI. Homebrew installs Node for you.
 

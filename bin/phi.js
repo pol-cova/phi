@@ -4,18 +4,21 @@ import { createInterface } from 'node:readline/promises';
 import { readFile, access } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { fetchProblem, runProblem, openProblem } from '../src/app.js';
 import { platformName, parseProblem } from '../src/problem.js';
 import { loadProblem, history } from '../src/storage.js';
-import { withBrowser, forgetSession, navigate, dataHome, browserLaunchOptions, describeBrowser, verifyBrowserLaunch, discoverSystemBrowsers, browserEnvFor } from '../src/browser.js';
+import { withBrowser, forgetSession, navigate, dataHome, browserLaunchOptions, describeBrowser, verifyBrowserLaunch, discoverSystemBrowsers, browserEnvFor, saveBrowserChoice } from '../src/browser.js';
+import { detectInstaller, upgradeCommand, latestVersion } from '../src/upgrade.js';
 import { compilerOptions } from '../src/platforms/codeforces.js';
 import { isInterviewLoggedIn } from '../src/platforms/interview.js';
 
 const help = `phi · coding practice in your terminal
 
-  phi setup [--bundled]              Detect system browsers or install Chromium (once)
+  phi setup [--use NAME|--bundled]   Detect system browsers or install Chromium (once)
+  phi upgrade [--force]              Reinstall phi itself to the latest version
   phi login <lc|nc|cf>              Sign in using a dedicated browser session
   phi fetch <ID|URL> [--lang NAME]  Save a statement, samples, and solution file
   phi show [DIR]                    Read the downloaded statement
@@ -39,6 +42,8 @@ const help = `phi · coding practice in your terminal
   --retry          Explicitly allow submission after an uncertain earlier attempt
   --json           Print structured results
   --bundled        With phi setup: force the bundled Chromium download
+  --use NAME       With phi setup: remember a system browser (channel or path)
+  --force          With phi upgrade: reinstall even when already up to date
 
   Inside a downloaded problem folder, DIR defaults to the current directory.
   Tests never submit. Use phi submit when you are ready.
@@ -68,7 +73,7 @@ async function main() {
   const { positionals, values } = parseArgs({ allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' }, lang: { type: 'string', short: 'l' }, out: { type: 'string' },
     show: { type: 'boolean' }, timeout: { type: 'string' }, exact: { type: 'boolean' }, local: { type: 'boolean' },
-    compiler: { type: 'string' }, retry: { type: 'boolean' }, json: { type: 'boolean' }, bundled: { type: 'boolean' },
+    compiler: { type: 'string' }, retry: { type: 'boolean' }, json: { type: 'boolean' }, bundled: { type: 'boolean' }, use: { type: 'string' }, force: { type: 'boolean' },
   } });
   const [command, argument, extra] = positionals;
   if (values.version) return print(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version);
@@ -78,6 +83,25 @@ async function main() {
   if (values.timeout && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error('--timeout must be a positive integer in milliseconds.');
   const directory = argument ?? '.';
   if (command === 'setup') {
+    if (values.use && values.bundled) throw new Error('Use only one of --use or --bundled.');
+    if (values.use) {
+      const wanted = values.use.trim();
+      if (!wanted) throw new Error('--use needs a channel (chrome) or a browser path.');
+      const found = await discoverSystemBrowsers();
+      const match = found.find(browser => browser.channel === wanted || browser.name.toLowerCase() === wanted.toLowerCase() || browser.path === wanted);
+      let choice;
+      if (match) choice = match.channel ? { channel: match.channel } : { executablePath: match.executablePath };
+      else {
+        try { await access(wanted); choice = { executablePath: wanted }; }
+        catch { choice = { channel: wanted }; }
+      }
+      await saveBrowserChoice(choice);
+      try { await verifyBrowserLaunch(); }
+      catch (error) { throw new Error(`Saved the choice but the browser did not launch: ${error.message}`); }
+      return values.json
+        ? print(JSON.stringify({ browsers: found, saved: choice }))
+        : print(`Saved ${describeBrowser()} as the default. No download needed.`);
+    }
     const launch = browserLaunchOptions();
     if (launch.channel || launch.executablePath) {
       await verifyBrowserLaunch();
@@ -87,14 +111,43 @@ async function main() {
     if (values.json) return print(JSON.stringify({ browsers: found, bundled: false }));
     if (found.length > 0 && !values.bundled) {
       const width = Math.max(...found.map(browser => browser.name.length));
-      const lines = found.map(browser => `  ${browser.name.padEnd(width)}  ${browserEnvFor(browser)}  (${browser.path})`);
-      return print(`Found ${found.length} system browser${found.length === 1 ? '' : 's'} \u2014 no download needed:\n${lines.join('\n')}\n\nTo use one, set it for your shell, then verify:\n  export ${browserEnvFor(found[0])}\n  phi setup\n\nOr download the bundled Chromium anyway:\n  phi setup --bundled`);
+      const lines = found.map((browser, i) => `  ${String(i + 1)}. ${browser.name.padEnd(width)}  ${browserEnvFor(browser)}  (${browser.path})`);
+      if (process.stdin.isTTY) {
+        print(`Found ${found.length} system browser${found.length === 1 ? '' : 's'} \u2014 no download needed:\n${lines.join('\n')}`);
+        const answer = (await wait(`\nRemember one as the default? Pick 1-${found.length} or press Enter to skip: `)).trim().toLowerCase();
+        if (answer && answer !== 's' && answer !== 'skip' && answer !== 'n' && answer !== 'no') {
+          const pick = found[Number(answer) - 1];
+          if (!pick) throw new Error(`Pick a number from 1 to ${found.length}.`);
+          await saveBrowserChoice(pick.channel ? { channel: pick.channel } : { executablePath: pick.executablePath });
+          await verifyBrowserLaunch();
+          return print(`Saved ${describeBrowser()} as the default.`);
+        }
+        return print(`Skipped. Remember one later with phi setup --use ${found[0].channel ?? JSON.stringify(found[0].executablePath)}, or download Chromium with phi setup --bundled.`);
+      }
+      return print(`Found ${found.length} system browser${found.length === 1 ? '' : 's'} \u2014 no download needed:\n${lines.join('\n')}\n\nRemember one (no env vars needed):\n  phi setup --use ${found[0].channel ?? JSON.stringify(found[0].executablePath)}\n\nOr export it for your shell:\n  export ${browserEnvFor(found[0])}\n\nOr download the bundled Chromium anyway:\n  phi setup --bundled`);
     }
     const require = createRequire(import.meta.url);
     const cli = path.join(path.dirname(require.resolve('playwright/package.json')), 'cli.js');
     const child = spawn(process.execPath, [cli, 'install', 'chromium'], { stdio: 'inherit' });
     await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Browser setup exited with code ${code}.`))); });
-    return;
+    await saveBrowserChoice({});
+    if (process.env.PHI_BROWSER_CHANNEL || process.env.PHI_BROWSER_EXECUTABLE) return print('Bundled Chromium installed, but PHI_BROWSER_CHANNEL/PHI_BROWSER_EXECUTABLE is set and still overrides it. Unset it to use the bundled browser.');
+    return print('Bundled Chromium installed.');
+  }
+  if (command === 'upgrade') {
+    const current = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+    const latest = await latestVersion();
+    if (latest && latest === current && !values.force) return values.json
+      ? print(JSON.stringify({ current, latest, upgraded: false }))
+      : print(`phi ${current} is already up to date.`);
+    const installer = detectInstaller(fileURLToPath(import.meta.url));
+    const tool = upgradeCommand(installer);
+    if (!values.json) print(latest ? `Upgrading phi ${current} \u2192 ${latest} with ${installer}\u2026` : `Upgrading phi ${current} with ${installer} (could not check the latest version)\u2026`);
+    const child = spawn(tool.command, tool.args, { stdio: 'inherit', shell: process.platform === 'win32' });
+    await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Upgrade exited with code ${code}. Try running ${tool.command} ${tool.args.join(' ')} yourself.`))); });
+    return values.json
+      ? print(JSON.stringify({ previous: current, latest, installer, upgraded: true }))
+      : print('Upgraded. Run phi doctor to verify. Your browser and sessions were kept.');
   }
   if (command === 'fetch') {
     if (!argument) throw new Error('Provide a problem ID or URL.');

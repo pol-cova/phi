@@ -31,6 +31,15 @@ Phi saves separate browser profiles under `~/.local/share/phi/browsers`. Set `PH
 
 If a submission times out, check `phi history` and the site before trying again. Phi requires `--retry` after an uncertain submission so it does not send your code twice.
 
+## Staying up to date
+
+```sh
+phi upgrade         # reinstall through npm, Bun, or Homebrew — whichever installed phi
+phi upgrade --force # reinstall even when already on the latest version
+```
+
+Phi checks the latest version on `main` first and stops when there is nothing to do. Your browser and saved sessions are kept.
+
 ## Configuration
 
 | Variable | Purpose |
@@ -53,14 +62,12 @@ phi setup
 #   Brave          PHI_BROWSER_EXECUTABLE="/Applications/Brave Browser.app/..."
 ```
 
-Then set it so it sticks and verify:
+Easiest is to remember one (no env vars needed):
 
 ```sh
-export PHI_BROWSER_CHANNEL=chrome
-phi setup  # verifies the system browser instead of downloading
-phi doctor   # checks the system launch
+phi setup --use chrome   # saves the default and verifies it launches
 ```
 
-With the variable set, fetch/test/submit all use your system browser in phi's isolated profile. Unset the variable to go back to the bundled Chromium. If both variables are set, phi errors out so the choice stays explicit. `phi setup --bundled` forces the ~200 MB bundled Chromium download even when a system browser exists, and `phi setup --json` prints the discovered list for scripts.
+In an interactive terminal plain `phi setup` lists what it found and offers to remember it. The choice is saved to `~/.local/share/phi/config.json` (honoring `PHI_HOME`); `PHI_BROWSER_CHANNEL` / `PHI_BROWSER_EXECUTABLE` still override it when set, e.g. `export PHI_BROWSER_CHANNEL=chrome`. If both variables are set, phi errors out so the choice stays explicit. `phi setup --bundled` forces the ~200 MB bundled Chromium download even when a system browser exists, and `phi setup --json` prints the discovered list for scripts.
 
 Why a real browser at all? The sites sit behind bot protection (Codeforces returns a Cloudflare challenge to plain `curl`), and login plus the LeetCode/NeetCode editors need JavaScript. Reusing your installed browser keeps that compatibility without the extra download.
